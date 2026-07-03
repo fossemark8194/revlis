@@ -7,7 +7,7 @@
   <title>REVLIS</title>
   <link rel="icon" href="assets/revlis-icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260703-2">
 </head>
 <body>
   <div id="app">
@@ -59,8 +59,25 @@
             <label class="file-control"><span>Аудиотрек</span><input id="verifyAudio" type="file" accept="audio/*"><b>Выбрать</b></label>
             <label class="file-control"><span>TTML-файл</span><input id="verifyTTML" type="file" accept=".ttml,.xml,text/xml,application/xml"><b>Выбрать</b></label>
             <p class="status" id="verifyStatus">Добавьте аудио и TTML.</p>
+            <div class="review-controls" id="verifyLoadedControls" hidden>
+              <div><strong id="verifyTrackTitle">Трек</strong><span id="verifyTrackArtist">Исполнитель</span></div>
+              <div class="segmented"><button class="active" id="verifyShowPreview">Просмотр</button><button id="verifyShowCode">Код TTML</button></div>
+              <div class="review-transport"><button class="player-toggle primary" id="verifyPlay">▶</button><button class="player-toggle primary" id="verifyStop">■</button><time id="verifyTime">0:00 / 0:00</time></div>
+              <input id="verifySeek" type="range" min="0" max="1" step="0.001" value="0">
+              <div class="timing-editor">
+                <div class="timing-heading"><b>Точная правка</b><span id="verifyCueCounter">0 / 0</span></div>
+                <strong id="verifyCueText">Фрагмент не выбран</strong>
+                <div class="cue-nav"><button id="verifyPreviousCue">‹</button><button id="verifyNextCue">›</button></div>
+                <div class="timing-row"><span>Начало</span><button data-verify-field="begin" data-delta="-0.005">−5</button><button data-verify-field="begin" data-delta="0.005">+5</button></div>
+                <div class="timing-row"><span>Конец</span><button data-verify-field="end" data-delta="-0.005">−5</button><button data-verify-field="end" data-delta="0.005">+5</button></div>
+                <div class="timing-row"><span>Весь фрагмент</span><button data-verify-field="both" data-delta="-0.005">−5</button><button data-verify-field="both" data-delta="0.005">+5</button></div>
+              </div>
+              <button id="verifyResetFiles">Открыть другие файлы</button>
+              <button class="primary" id="verifySave">Сохранить</button>
+            </div>
           </aside>
           <div class="preview-shell" id="verifyPreview"></div>
+          <pre class="ttml-code" id="verifyCode" hidden></pre>
         </div>
       </section>
 
@@ -71,7 +88,7 @@
           </div>
           <div class="editor-stage active" data-editor-stage="details">
             <div class="form-grid panel">
-              <div class="panel-title"><small>Шаг 1</small><h2>Новый TTML</h2></div>
+              <div class="panel-title"><small>Шаг 1</small><h2>Подготовка трека</h2></div>
               <label>Аудиотрек<input id="editorAudio" type="file" accept="audio/*"></label>
               <label>Название трека<input id="trackTitle" placeholder="Название"></label>
               <label>Исполнитель<input id="trackArtist" placeholder="Исполнитель"></label>
@@ -82,7 +99,7 @@
           </div>
           <div class="editor-stage" data-editor-stage="sync">
             <div class="sync-grid">
-              <aside class="panel sync-controls">
+              <aside class="panel sync-controls" id="syncKeyboardSink" tabindex="-1">
                 <div class="panel-title"><small>Шаг 2</small><h2>Синхронизация</h2></div>
                 <div class="segmented"><button class="active" data-sync-mode="line">Построчно</button><button data-sync-mode="word">Пословно</button></div>
                 <audio id="editorPlayer"></audio>
@@ -111,12 +128,25 @@
           </div>
           <div class="editor-stage" data-editor-stage="export">
             <div class="export-grid">
-              <div class="preview-shell" id="editorPreview"></div>
               <aside class="panel export-actions">
-                <div class="panel-title"><small>Шаг 3</small><h2>Готово</h2></div>
-                <button id="backToSync">Исправить тайминги</button>
+                <div class="panel-title"><small>Шаг 3</small><h2>Экспорт TTML</h2></div>
+                <div class="export-summary"><span><small>Трек</small><b id="exportTrack">—</b></span><span><small>Исполнитель</small><b id="exportArtist">—</b></span><span><small>Тип</small><b id="exportMode">—</b></span><span><small>Фрагменты</small><b id="exportCount">0</b></span></div>
+                <div class="segmented"><button class="active" id="editorShowPreview">Просмотр</button><button id="editorShowCode">Код TTML</button></div>
+                <div class="review-transport"><button id="exportPlay">▶ Воспроизвести</button><button class="player-toggle primary" id="exportStop">■</button><time id="exportTime">0:00 / 0:00</time></div>
+                <input id="exportSeek" type="range" min="0" max="1" step="0.001" value="0">
+                <div class="timing-editor">
+                  <div class="timing-heading"><b>Точная правка</b><span id="exportCueCounter">0 / 0</span></div>
+                  <strong id="exportCueText">Фрагмент не выбран</strong>
+                  <div class="cue-nav"><button id="exportPreviousCue">‹</button><button id="exportNextCue">›</button></div>
+                  <div class="timing-row"><span>Начало</span><button data-export-field="begin" data-delta="-0.005">−5</button><button data-export-field="begin" data-delta="0.005">+5</button></div>
+                  <div class="timing-row"><span>Конец</span><button data-export-field="end" data-delta="-0.005">−5</button><button data-export-field="end" data-delta="0.005">+5</button></div>
+                  <div class="timing-row"><span>Весь фрагмент</span><button data-export-field="both" data-delta="-0.005">−5</button><button data-export-field="both" data-delta="0.005">+5</button></div>
+                </div>
+                <button id="backToSync">‹ Назад</button>
                 <button class="primary" id="downloadTTML">Скачать TTML</button>
               </aside>
+              <div class="preview-shell" id="editorPreview"></div>
+              <pre class="ttml-code" id="editorCode" hidden></pre>
             </div>
           </div>
         </div>
@@ -166,6 +196,6 @@
     </form>
   </dialog>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260703-2"></script>
 </body>
 </html>

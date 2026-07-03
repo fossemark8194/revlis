@@ -10,8 +10,8 @@ const formatTime = value => `${Math.floor((value || 0) / 60)}:${Math.floor(value
 
 const state = {
   route: "home",
-  verify: { audioURL: "", document: null, coverURL: "" },
-  editor: { audioURL: "", lines: [], cues: [], mode: "line", index: 0, holding: false },
+  verify: { audioURL: "", document: null, coverURL: "", previewAudio: null, selectedCue: 0, showsPreview: true },
+  editor: { audioURL: "", lines: [], cues: [], mode: "line", index: 0, holding: false, previewAudio: null, selectedEdit: 0, showsPreview: true },
   visualizer: { audioURL: "", document: null, cover: null, palette: ["#11244b", "#5d274b", "#0c5a60"], exporting: false, recorder: null }
 };
 
@@ -146,8 +146,8 @@ function createPreview(container, lyricsDocument, audioURL, coverURL = "") {
   const audio = $("audio", container), toggle = $(".preview-toggle", container), seek = $(".preview-seek", container);
   toggle.addEventListener("click", () => audio.paused ? audio.play() : audio.pause());
   seek.addEventListener("input", () => { if (Number.isFinite(audio.duration)) audio.currentTime = Number(seek.value) * audio.duration; });
-  const viewport = $(".lyrics-viewport", container);
-  const introDots = window.document.createElement("div"); introDots.className = "intro-dots"; introDots.textContent = "•••"; introDots.hidden = true; viewport.append(introDots);
+  const viewport = $(".lyrics-viewport", container), stack = window.document.createElement("div");
+  stack.className = "lyrics-stack"; viewport.append(stack);
   lyricsDocument.lines.forEach((line, lineIndex) => {
     const element = window.document.createElement("div");
     element.className = "lyric-line";
@@ -158,13 +158,15 @@ function createPreview(container, lyricsDocument, audioURL, coverURL = "") {
         span.innerHTML = `${wordLayer(cue.text, "rest")}${wordLayer(cue.text, "fill")}`; element.append(span);
       });
     } else element.textContent = line;
-    viewport.append(element);
+    stack.append(element);
   });
-  $$(".lyric-line", viewport).forEach(line => line.addEventListener("click", () => {
+  $$(".lyric-line", stack).forEach(line => line.addEventListener("click", () => {
     const cues = lyricsDocument.cues.filter(cue => cue.lineIndex === Number(line.dataset.line) && cue.begin != null);
     if (cues.length) { audio.currentTime = Math.min(...cues.map(cue => cue.begin)); audio.play(); }
   }));
-  previewInstances.push({ container, viewport, audio, toggle, seek, introDots, document: lyricsDocument });
+  const instance = { container, viewport, stack, audio, toggle, seek, focusLine: null, document: lyricsDocument };
+  previewInstances.push(instance);
+  return instance;
 }
 
 const previewInstances = [];
@@ -176,23 +178,32 @@ function updatePreviews() {
     instance.seek.value = instance.audio.duration ? time / instance.audio.duration : 0;
     $(".preview-time", instance.container).textContent = formatTime(time);
     $(".preview-duration", instance.container).textContent = formatTime(instance.audio.duration);
-    const focus = visualFocus(instance.document, time);
-    const pause = instrumentalBreak(instance.document, time);
-    instance.introDots.hidden = !pause;
-    if (pause) {
-      instance.introDots.style.top = `${50 + (pause.visualPosition - focus) * 20}%`;
-      instance.introDots.style.setProperty("--front", `${clamp((time - pause.start) / (pause.end - pause.start)) * 134}%`);
-      instance.introDots.style.opacity = 1 - smoothstep((time - (pause.end - .45)) / .45);
+    if(instance.audio===state.verify.previewAudio){
+      $("#verifyPlay").textContent=instance.audio.paused?"▶":"Ⅱ";$("#verifySeek").value=instance.audio.duration?time/instance.audio.duration:0;$("#verifyTime").textContent=`${formatTime(time)} / ${formatTime(instance.audio.duration)}`;
+      if(!instance.audio.paused){const activeIndex=instance.document.cues.findIndex(cue=>cue.begin!=null&&cue.end!=null&&time>=cue.begin&&time<=cue.end);if(activeIndex>=0&&activeIndex!==state.verify.selectedCue){state.verify.selectedCue=activeIndex;renderVerifyTiming();}}
     }
-    $$(".lyric-line", instance.viewport).forEach(line => {
-      const index = Number(line.dataset.line), distance = Math.abs(index - focus), emphasis = lineEmphasis(instance.document, index, time);
-      const resting = distance < .75 ? .34 : distance < 1.75 ? .27 : .15;
-      line.style.top = `${50 + (index - focus) * 20}%`;
-      line.style.opacity = resting + (1 - resting) * emphasis;
-      line.style.filter = `blur(${Math.max(distance - 1.35, 0) * 2}px)`;
+    if(instance.audio===state.editor.previewAudio){
+      $("#exportPlay").textContent=instance.audio.paused?"▶ Воспроизвести":"Ⅱ Пауза";$("#exportSeek").value=instance.audio.duration?time/instance.audio.duration:0;$("#exportTime").textContent=`${formatTime(time)} / ${formatTime(instance.audio.duration)}`;
+      if(!instance.audio.paused){const activeIndex=instance.document.cues.findIndex(cue=>cue.begin!=null&&cue.end!=null&&time>=cue.begin&&time<=cue.end);if(activeIndex>=0&&activeIndex!==state.editor.selectedEdit){state.editor.selectedEdit=activeIndex;renderEditorTiming();}}
+    }
+    const previewBounds=lineBounds(instance.document),activeBound=previewBounds.find(bound => time>=bound.begin&&time<=bound.end);
+    if(activeBound&&activeBound.lineIndex!==instance.focusLine&&instance.viewport.clientHeight>0){
+      instance.focusLine = activeBound.lineIndex;
+      const activeLine = $(`.lyric-line[data-line="${activeBound.lineIndex}"]`, instance.stack);
+      if (activeLine) instance.stack.style.transform = `translateY(${instance.viewport.clientHeight / 2 - activeLine.offsetTop - activeLine.offsetHeight / 2}px)`;
+    }
+    $$(".lyric-line", instance.stack).forEach(line => {
+      const index=Number(line.dataset.line),emphasis=lineEmphasis(instance.document,index,time),bound=previewBounds.find(item=>item.lineIndex===index);
+      if (instance.document.mode === "line") {
+        const opacity = !bound ? .30 : time >= bound.begin && time <= bound.end ? 1 : time > bound.end ? .94 : .30;
+        line.style.color = `rgba(255,255,255,${opacity})`;
+      }
       $$(".word", line).forEach(word => {
         const cue = { begin: Number(word.dataset.begin), end: Number(word.dataset.end) }, progress = cueProgress(cue, time);
         word.style.setProperty("--front", `${progress * 155}%`);
+        const restingOpacity = .30 + ((time > cue.end ? .94 : .38) - .30) * emphasis;
+        $(".word-layer.rest", word).style.color = `rgba(255,255,255,${restingOpacity})`;
+        $(".word-layer.fill", word).style.opacity = emphasis;
         const duration = cue.end - cue.begin, letters = $$("i", word), count = letters.length;
         letters.forEach(letter => {
           let wave = 0;
@@ -229,7 +240,30 @@ $("#verifyTTML").addEventListener("change", async event => {
   try { const { text } = await readTextFile(event.target); state.verify.document = parseTTML(text); $("#verifyStatus").textContent = "TTML загружен"; refreshVerify(); }
   catch (error) { $("#verifyStatus").textContent = error.message; }
 });
-function refreshVerify() { previewInstances.splice(0, previewInstances.length, ...previewInstances.filter(item => item.container !== $("#verifyPreview"))); createPreview($("#verifyPreview"), state.verify.document, state.verify.audioURL); }
+function refreshVerify() {
+  const container=$("#verifyPreview"), ready=Boolean(state.verify.document&&state.verify.audioURL);
+  previewInstances.splice(0,previewInstances.length,...previewInstances.filter(item=>item.container!==container));
+  $(".verify-layout").classList.toggle("reviewing",ready); container.hidden=!ready; $("#verifyLoadedControls").hidden=!ready;
+  if(!ready){container.innerHTML="";return;}
+  const instance=createPreview(container,state.verify.document,state.verify.audioURL,state.verify.coverURL);state.verify.previewAudio=instance.audio;
+  $("#verifyTrackTitle").textContent=state.verify.document.title;$("#verifyTrackArtist").textContent=state.verify.document.artist||"Исполнитель";
+  $("#verifyCode").textContent=buildTTML(state.verify.document);renderVerifyTiming();
+}
+
+function renderVerifyTiming(){
+  const cues=state.verify.document?.cues||[],index=clamp(state.verify.selectedCue,0,Math.max(cues.length-1,0)),cue=cues[index];state.verify.selectedCue=index;
+  $("#verifyCueCounter").textContent=cues.length?`${index+1} / ${cues.length}`:"0 / 0";$("#verifyCueText").textContent=cue?.text||"Фрагмент не выбран";
+}
+function setVerifyView(showsPreview){state.verify.showsPreview=showsPreview;$("#verifyPreview").hidden=!showsPreview;$("#verifyCode").hidden=showsPreview;$("#verifyShowPreview").classList.toggle("active",showsPreview);$("#verifyShowCode").classList.toggle("active",!showsPreview);if(showsPreview){const instance=previewInstances.find(item=>item.container===$("#verifyPreview"));if(instance)instance.focusLine=null;}else $("#verifyCode").textContent=buildTTML(state.verify.document);}
+$("#verifyShowPreview").addEventListener("click",()=>setVerifyView(true));$("#verifyShowCode").addEventListener("click",()=>setVerifyView(false));
+$("#verifyPlay").addEventListener("click",()=>{const audio=state.verify.previewAudio;if(audio)audio.paused?audio.play():audio.pause();});
+$("#verifyStop").addEventListener("click",()=>{const audio=state.verify.previewAudio;if(audio){audio.pause();audio.currentTime=0;}});
+$("#verifySeek").addEventListener("input",event=>{const audio=state.verify.previewAudio;if(audio&&Number.isFinite(audio.duration))audio.currentTime=Number(event.target.value)*audio.duration;});
+$("#verifyPreviousCue").addEventListener("click",()=>selectVerifyCue(-1));$("#verifyNextCue").addEventListener("click",()=>selectVerifyCue(1));
+function selectVerifyCue(direction){const cues=state.verify.document?.cues||[];if(!cues.length)return;state.verify.selectedCue=clamp(state.verify.selectedCue+direction,0,cues.length-1);const cue=cues[state.verify.selectedCue];if(cue.begin!=null&&state.verify.previewAudio)state.verify.previewAudio.currentTime=cue.begin;renderVerifyTiming();}
+$$('[data-verify-field]').forEach(button=>button.addEventListener("click",()=>{const cue=state.verify.document?.cues[state.verify.selectedCue];if(!cue)return;const delta=Number(button.dataset.delta),begin=cue.begin??0,end=cue.end??begin+.03,limit=state.verify.previewAudio?.duration||Number.MAX_SAFE_INTEGER;switch(button.dataset.verifyField){case"begin":cue.begin=Math.min(Math.max(begin+delta,0),end-.03);break;case"end":cue.end=Math.max(Math.min(end+delta,limit),begin+.03);break;default:{const length=end-begin,next=Math.min(Math.max(begin+delta,0),Math.max(limit-length,0));cue.begin=next;cue.end=next+length;}}$("#verifyCode").textContent=buildTTML(state.verify.document);renderVerifyTiming();}));
+$("#verifySave").addEventListener("click",()=>{if(state.verify.document)downloadBlob(new Blob([buildTTML(state.verify.document)],{type:"application/ttml+xml"}),`${state.verify.document.title||"lyrics"}-edited.ttml`);});
+$("#verifyResetFiles").addEventListener("click",()=>{state.verify.previewAudio?.pause();state.verify={audioURL:"",document:null,coverURL:"",previewAudio:null,selectedCue:0,showsPreview:true};$("#verifyAudio").value="";$("#verifyTTML").value="";$("#verifyStatus").textContent="Добавьте аудио и TTML.";setVerifyView(true);refreshVerify();});
 
 const editorPlayer = $("#editorPlayer");
 $("#editorAudio").addEventListener("change", event => useAudioFile(event.target, editorPlayer, (url, file) => {
@@ -255,7 +289,7 @@ function editorStage(name) {
   $$(".editor-stage").forEach(stage => stage.classList.toggle("active", stage.dataset.editorStage === name));
   const order = ["details", "sync", "export"], active = order.indexOf(name);
   $$(".editor-steps span").forEach((step, index) => step.classList.toggle("active", index === active));
-  if (name === "sync" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  if(name==="sync")$("#syncKeyboardSink").focus({preventScroll:true});
 }
 
 function buildEditorCues() {
@@ -319,27 +353,37 @@ function isTextEditing(element) {
   return element.tagName === "INPUT" && !["range", "button", "checkbox", "radio"].includes(element.type);
 }
 function consumeSyncSpace(event) {
-  if (!isSyncScreen() || event.code !== "Space" || isTextEditing(event.target)) return false;
+  const isSpace=event.code==="Space"||event.key===" "||event.key==="Spacebar";
+  if (!isSyncScreen() || !isSpace || isTextEditing(event.target)) return false;
   event.preventDefault(); event.stopPropagation();
   return true;
 }
 window.addEventListener("keydown", event => {
   if (!consumeSyncSpace(event) || event.repeat) return;
   const cue = state.editor.cues[state.editor.index]; if (!cue) return;
-  if (editorPlayer.paused) editorPlayer.play(); cue.begin = editorPlayer.currentTime; cue.end = null; state.editor.holding = true; $("#syncMessage").textContent = ""; renderSyncList();
-  document.body.classList.add("sync-space-held");
+  if (editorPlayer.paused) editorPlayer.play(); cue.begin = editorPlayer.currentTime; cue.end = null; state.editor.holding = true;
 }, true);
+window.addEventListener("keypress",event=>{if(isSyncScreen()&&(event.code==="Space"||event.key===" "||event.key==="Spacebar")){event.preventDefault();event.stopPropagation();}},true);
 window.addEventListener("keyup", event => {
   if (!consumeSyncSpace(event)) return;
-  document.body.classList.remove("sync-space-held");
   if (!state.editor.holding) return;
   const cue = state.editor.cues[state.editor.index]; cue.end = Math.max(editorPlayer.currentTime, cue.begin + .01); state.editor.holding = false; state.editor.index = Math.min(state.editor.index + 1, state.editor.cues.length); renderSyncList();
 }, true);
 
 function editorDocument() { return { title: $("#trackTitle").value || "Без названия", artist: $("#trackArtist").value, album: $("#trackAlbum").value, language: "ru", mode: state.editor.mode, lines: state.editor.lines, cues: state.editor.cues }; }
 $("#toExport").addEventListener("click", () => {
-  editorPlayer.pause(); editorStage("export"); const container = $("#editorPreview"); previewInstances.splice(0, previewInstances.length, ...previewInstances.filter(item => item.container !== container)); createPreview(container, editorDocument(), state.editor.audioURL);
+  editorPlayer.pause();state.editor.selectedEdit=Math.max(state.editor.cues.findIndex(cue=>cue.end!=null),0);editorStage("export");refreshEditorPreview();renderEditorExport();
 });
+
+function refreshEditorPreview(time=0,shouldPlay=false){const container=$("#editorPreview");previewInstances.splice(0,previewInstances.length,...previewInstances.filter(item=>item.container!==container));const instance=createPreview(container,editorDocument(),state.editor.audioURL);state.editor.previewAudio=instance.audio;instance.audio.addEventListener("loadedmetadata",()=>{instance.audio.currentTime=Math.min(time,instance.audio.duration||time);if(shouldPlay)instance.audio.play();},{once:true});}
+function renderEditorExport(){const document=editorDocument();$("#exportTrack").textContent=document.title;$("#exportArtist").textContent=document.artist||"—";$("#exportMode").textContent=document.mode==="word"?"Пословно":"Построчно";$("#exportCount").textContent=document.cues.length;$("#editorCode").textContent=buildTTML(document);renderEditorTiming();}
+function renderEditorTiming(){const cues=state.editor.cues,index=clamp(state.editor.selectedEdit,0,Math.max(cues.length-1,0)),cue=cues[index];state.editor.selectedEdit=index;$("#exportCueCounter").textContent=cues.length?`${index+1} / ${cues.length}`:"0 / 0";$("#exportCueText").textContent=cue?.text||"Фрагмент не выбран";}
+function setEditorExportView(showsPreview){state.editor.showsPreview=showsPreview;$("#editorPreview").hidden=!showsPreview;$("#editorCode").hidden=showsPreview;$("#editorShowPreview").classList.toggle("active",showsPreview);$("#editorShowCode").classList.toggle("active",!showsPreview);if(showsPreview){const instance=previewInstances.find(item=>item.container===$("#editorPreview"));if(instance)instance.focusLine=null;}else $("#editorCode").textContent=buildTTML(editorDocument());}
+$("#editorShowPreview").addEventListener("click",()=>setEditorExportView(true));$("#editorShowCode").addEventListener("click",()=>setEditorExportView(false));
+$("#exportPlay").addEventListener("click",()=>{const audio=state.editor.previewAudio;if(audio)audio.paused?audio.play():audio.pause();});$("#exportStop").addEventListener("click",()=>{const audio=state.editor.previewAudio;if(audio){audio.pause();audio.currentTime=0;}});$("#exportSeek").addEventListener("input",event=>{const audio=state.editor.previewAudio;if(audio&&Number.isFinite(audio.duration))audio.currentTime=Number(event.target.value)*audio.duration;});
+$("#exportPreviousCue").addEventListener("click",()=>selectEditorCue(-1));$("#exportNextCue").addEventListener("click",()=>selectEditorCue(1));
+function selectEditorCue(direction){if(!state.editor.cues.length)return;state.editor.selectedEdit=clamp(state.editor.selectedEdit+direction,0,state.editor.cues.length-1);const cue=state.editor.cues[state.editor.selectedEdit];if(cue.begin!=null&&state.editor.previewAudio)state.editor.previewAudio.currentTime=cue.begin;renderEditorTiming();}
+$$('[data-export-field]').forEach(button=>button.addEventListener("click",()=>{const cue=state.editor.cues[state.editor.selectedEdit];if(!cue)return;const delta=Number(button.dataset.delta),begin=cue.begin??0,end=cue.end??begin+.03,limit=state.editor.previewAudio?.duration||Number.MAX_SAFE_INTEGER;switch(button.dataset.exportField){case"begin":cue.begin=Math.min(Math.max(begin+delta,0),end-.03);break;case"end":cue.end=Math.max(Math.min(end+delta,limit),begin+.03);break;default:{const length=end-begin,next=Math.min(Math.max(begin+delta,0),Math.max(limit-length,0));cue.begin=next;cue.end=next+length;}}const time=state.editor.previewAudio?.currentTime||0,playing=state.editor.previewAudio?!state.editor.previewAudio.paused:false;state.editor.previewAudio?.pause();refreshEditorPreview(time,playing);renderEditorExport();}));
 
 function timecode(value) { const h = Math.floor(value / 3600), m = Math.floor(value % 3600 / 60), s = (value % 60).toFixed(3).padStart(6,"0"); return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${s}`; }
 function buildTTML(document) {
@@ -367,8 +411,12 @@ $("#vizCover").addEventListener("change", event => {
 
 function samplePalette(image) {
   const canvas = document.createElement("canvas"); canvas.width = canvas.height = 32; const ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(image,0,0,32,32);
-  return [[5,5],[26,6],[8,25],[25,25]].map(([x,y]) => { const d = ctx.getImageData(x,y,1,1).data; return `rgb(${Math.max(d[0],35)},${Math.max(d[1],35)},${Math.max(d[2],35)})`; });
+  return [[4,5],[25,6],[7,25],[25,25]].map(([x,y]) => { const d = ctx.getImageData(x,y,1,1).data,[r,g,b]=boostPaletteColor(d[0],d[1],d[2]);return `rgb(${r},${g},${b})`; });
 }
+
+function boostPaletteColor(r,g,b){const max=Math.max(r,g,b)/255,min=Math.min(r,g,b)/255,brightness=clamp(max*1.08,.28,.92),sourceSaturation=max?1-min/max:0,saturation=Math.max(sourceSaturation,.66),scale=max?brightness/max:1;let nr=r/255*scale,ng=g/255*scale,nb=b/255*scale;const peak=Math.max(nr,ng,nb),floor=peak*(1-saturation),oldFloor=Math.min(nr,ng,nb),range=Math.max(peak-oldFloor,.001);nr=floor+(nr-oldFloor)/range*(peak-floor);ng=floor+(ng-oldFloor)/range*(peak-floor);nb=floor+(nb-oldFloor)/range*(peak-floor);return[nr,ng,nb].map(value=>Math.round(clamp(value)*255));}
+function colorAlpha(color,alpha){if(color.startsWith("#")){const hex=color.slice(1),value=hex.length===3?hex.split("").map(x=>x+x).join(""):hex;return `rgba(${parseInt(value.slice(0,2),16)},${parseInt(value.slice(2,4),16)},${parseInt(value.slice(4,6),16)},${alpha})`;}const values=color.match(/[\d.]+/g)||[0,0,0];return `rgba(${values[0]},${values[1]},${values[2]},${alpha})`;}
+function drawAspectFill(ctx,image,x,y,width,height,scale=1,offsetX=0,offsetY=0){const ratio=Math.max(width/image.width,height/image.height)*scale,w=image.width*ratio,h=image.height*ratio;ctx.drawImage(image,x+(width-w)/2+offsetX,y+(height-h)/2+offsetY,w,h);}
 
 function drawCover(ctx, image, x, y, size) {
   ctx.save(); ctx.beginPath(); ctx.roundRect(x,y,size,size,size*.025); ctx.clip();
@@ -380,9 +428,10 @@ function drawCover(ctx, image, x, y, size) {
 function drawVisualizer() {
   const ctx = vizContext, W = vizCanvas.width, H = vizCanvas.height, time = vizPlayer.currentTime || 0, phase = performance.now()/1000, palette = state.visualizer.palette;
   $("#vizPlay").textContent=vizPlayer.paused?"▶":"Ⅱ";$("#vizSeek").value=vizPlayer.duration?time/vizPlayer.duration:0;$("#vizCurrentTime").textContent=formatTime(time);$("#vizDuration").textContent=formatTime(vizPlayer.duration);
-  ctx.clearRect(0,0,W,H); const gradient = ctx.createLinearGradient(Math.sin(phase*.12)*W*.2,0,W,H+Math.cos(phase*.1)*H*.2); palette.forEach((color,index)=>gradient.addColorStop(index/(palette.length-1),color)); ctx.fillStyle=gradient; ctx.fillRect(0,0,W,H);
-  if (state.visualizer.cover) { ctx.save(); ctx.globalAlpha=.28; ctx.filter=`blur(${W*.025}px) saturate(1.5)`; ctx.drawImage(state.visualizer.cover,-W*.05,-H*.15,W*1.1,H*1.3); ctx.restore(); }
-  ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
+  ctx.clearRect(0,0,W,H);const gradient=ctx.createLinearGradient((.04+.16*Math.sin(phase*.16))*W,(.08+.12*Math.cos(phase*.13))*H,(.94+.06*Math.cos(phase*.11))*W,(.90+.08*Math.sin(phase*.15))*H);palette.forEach((color,index)=>gradient.addColorStop(index/(palette.length-1),color));ctx.fillStyle=gradient;ctx.fillRect(0,0,W,H);
+  if(state.visualizer.cover){ctx.save();ctx.globalAlpha=.60;ctx.filter=`blur(${W*.056}px) saturate(1.62) contrast(1.1)`;drawAspectFill(ctx,state.visualizer.cover,0,0,W,H,1.31+.035*Math.sin(phase*.17),34/1280*W*Math.sin(phase*.14),28/720*H*Math.cos(phase*.12));ctx.restore();}
+  ctx.save();ctx.globalCompositeOperation="screen";const glow=ctx.createLinearGradient(.08*W,(.5+.28*Math.sin(phase*.12))*H,.92*W,(.5+.28*Math.cos(phase*.10))*H);glow.addColorStop(0,colorAlpha(palette.at(-1),.52));glow.addColorStop(.5,"rgba(0,0,0,0)");glow.addColorStop(1,colorAlpha(palette[0],.42));ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);ctx.restore();
+  ctx.fillStyle="rgba(0,0,0,.30)"; ctx.fillRect(0,0,W,H);
   const coverSize=Math.min(W*.27,H*.48), left=W*.07, coverY=(H-coverSize)/2-H*.055; drawCover(ctx,state.visualizer.cover,left,coverY,coverSize);
   ctx.fillStyle="#fff"; ctx.font=`700 ${W*.021}px -apple-system`; ctx.fillText($("#vizTitle").value||"Название трека",left,coverY+coverSize+H*.06,coverSize);
   ctx.fillStyle="rgba(255,255,255,.64)"; ctx.font=`500 ${W*.014}px -apple-system`; ctx.fillText($("#vizArtist").value||"Исполнитель",left,coverY+coverSize+H*.092,coverSize);
@@ -393,11 +442,13 @@ function drawVisualizer() {
 
 function drawCanvasLyrics(ctx, document, time, x, width, height) {
   if (!document) return; const focus=visualFocus(document,time), slot=height*.132, center=height/2; ctx.font=`750 ${Math.min(width*.066,height*.055)}px -apple-system`; ctx.textBaseline="middle";
-  const pause=instrumentalBreak(document,time); if(pause){const p=clamp((time-pause.start)/(pause.end-pause.start)),y=center+(pause.visualPosition-focus)*slot,measure=ctx.measureText("•••"),edge=Math.min(measure.width*.4,width*.08);ctx.save();ctx.globalAlpha=1-smoothstep((time-(pause.end-.45))/.45);ctx.fillStyle="rgba(255,255,255,.22)";ctx.fillText("•••",x,y);const gradient=ctx.createLinearGradient(x,y,x+measure.width+edge,y);gradient.addColorStop(0,"rgba(255,255,255,.94)");gradient.addColorStop(clamp(p-.18),"rgba(255,255,255,.94)");gradient.addColorStop(Math.max(clamp(p),.001),"rgba(255,255,255,0)");ctx.fillStyle=gradient;ctx.fillText("•••",x,y);ctx.restore();}
-  document.lines.forEach((line,index)=>{ const distance=Math.abs(index-focus); if(distance>3)return; const emphasis=lineEmphasis(document,index,time),rest=distance<.75?.34:distance<1.75?.27:.15,alpha=rest+(1-rest)*emphasis,y=center+(index-focus)*slot; ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle="#fff";
-    if(document.mode==="word") { let cursor=x; document.cues.filter(c=>c.lineIndex===index).forEach(cue=>{ cursor+=drawCanvasWord(ctx,cue,time,cursor,y,rest,emphasis)+width*.025; }); }
-    else ctx.fillText(line,x,y,width); ctx.restore(); });
+  const pause=instrumentalBreak(document,time);if(pause){const p=clamp((time-pause.start)/(pause.end-pause.start)),y=center+(pause.visualPosition-focus)*slot,measure=ctx.measureText("•••"),edge=Math.min(Math.max(measure.width*.34,16),72),front=x+(measure.width+edge)*p;ctx.save();ctx.globalAlpha=1-smoothstep((time-(pause.end-.45))/.45);ctx.fillStyle="rgba(255,255,255,.22)";ctx.fillText("•••",x,y);const gradient=ctx.createLinearGradient(front-edge,y,front,y);gradient.addColorStop(0,"rgba(255,255,255,.90)");gradient.addColorStop(1,"rgba(255,255,255,0)");ctx.fillStyle=gradient;ctx.fillText("•••",x,y);ctx.restore();}
+  document.lines.forEach((line,index)=>{ const distance=Math.abs(index-focus); if(distance>3)return; const emphasis=lineEmphasis(document,index,time),rest=distance<.75?.34:distance<1.75?.27:.16,alpha=rest+(1-rest)*emphasis,y=center+(index-focus)*slot; ctx.save();ctx.filter=`blur(${Math.max(distance-1.35,0)*2.4}px)`;ctx.globalAlpha=alpha;ctx.fillStyle="#fff";
+    if(document.mode==="word") { let cursor=x,lineY=y;document.cues.filter(c=>c.lineIndex===index).forEach(cue=>{const wordWidth=ctx.measureText(cue.text).width;if(cursor+wordWidth>x+width&&cursor>x){cursor=x;lineY+=Math.min(width*.066,height*.055)*1.18;}cursor+=drawCanvasWord(ctx,cue,time,cursor,lineY,rest,emphasis)+width*.025;}); }
+    else drawWrappedCanvasLine(ctx,line,x,y,width,Math.min(width*.066,height*.055)*1.18,3);ctx.restore(); });
 }
+
+function drawWrappedCanvasLine(ctx,text,x,y,width,lineHeight,maxLines){const words=text.split(/\s+/),lines=[];let current="";for(const word of words){const candidate=current?`${current} ${word}`:word;if(ctx.measureText(candidate).width<=width||!current)current=candidate;else{lines.push(current);current=word;if(lines.length===maxLines-1)break;}}if(current&&lines.length<maxLines)lines.push(current);const startY=y-(lines.length-1)*lineHeight/2;lines.forEach((line,index)=>ctx.fillText(line,x,startY+index*lineHeight));}
 
 function drawCanvasWord(ctx, cue, time, x, y, resting, emphasis) {
   const characters=[...cue.text], widths=characters.map(character=>ctx.measureText(character).width), total=widths.reduce((sum,value)=>sum+value,0), progress=cueProgress(cue,time), duration=cue.end-cue.begin;
