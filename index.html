@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f5f7">
+  <title>REVLIS</title>
+  <link rel="icon" href="assets/revlis-icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="app-header" hidden>
+      <button class="icon-button" id="homeButton" title="Главное меню" aria-label="Главное меню">
+        <span aria-hidden="true">←</span>
+      </button>
+      <img src="assets/revlis-logo.svg" alt="REVLIS" class="header-logo">
+      <span class="step-label" id="sectionLabel"></span>
+    </header>
+
+    <main>
+      <section class="screen home-screen active" id="homeScreen">
+        <div class="home-shell">
+          <img src="assets/revlis-logo.svg" alt="REVLIS" class="home-logo">
+          <div class="home-heading">
+            <h1>Что вы хотите сделать?</h1>
+            <p>Выберите рабочий режим</p>
+          </div>
+          <div class="mode-grid">
+            <button class="mode-card" data-route="verify">
+              <span class="mode-icon">✓</span>
+              <span class="mode-copy"><strong>Проверить синхронизацию</strong><small>Откройте аудио и готовый TTML, проверьте тайминги и визуализацию.</small></span>
+              <span class="arrow">→</span>
+            </button>
+            <button class="mode-card" data-route="editor">
+              <span class="mode-icon">≋</span>
+              <span class="mode-copy"><strong>Редактор</strong><small>Создайте TTML вручную и синхронизируйте строки или слова пробелом.</small></span>
+              <span class="arrow">→</span>
+            </button>
+            <button class="mode-card" data-route="automatic">
+              <span class="mode-icon">✦</span><span class="badge">Бета</span>
+              <span class="mode-copy"><strong>Автоматическая синхронизация</strong><small>Автоматическое распознавание и первичная расстановка таймингов.</small></span>
+              <span class="arrow">→</span>
+            </button>
+            <button class="mode-card" data-route="visualizer">
+              <span class="mode-icon">▣</span><span class="badge">Бета</span>
+              <span class="mode-copy"><strong>Track Visualizer</strong><small>Создайте видео с обложкой, прогрессом и анимированным текстом.</small></span>
+              <span class="arrow">→</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="verifyScreen">
+        <div class="workspace verify-layout">
+          <aside class="panel controls-panel">
+            <div class="panel-title"><small>REVLIS</small><h2>Проверка</h2></div>
+            <label class="file-control"><span>Аудиотрек</span><input id="verifyAudio" type="file" accept="audio/*"><b>Выбрать</b></label>
+            <label class="file-control"><span>TTML-файл</span><input id="verifyTTML" type="file" accept=".ttml,.xml,text/xml,application/xml"><b>Выбрать</b></label>
+            <p class="status" id="verifyStatus">Добавьте аудио и TTML.</p>
+          </aside>
+          <div class="preview-shell" id="verifyPreview"></div>
+        </div>
+      </section>
+
+      <section class="screen" id="editorScreen">
+        <div class="workspace editor-workspace">
+          <div class="editor-steps" aria-label="Этапы">
+            <span class="active">1. Данные</span><span>2. Синхронизация</span><span>3. Экспорт</span>
+          </div>
+          <div class="editor-stage active" data-editor-stage="details">
+            <div class="form-grid panel">
+              <div class="panel-title"><small>Шаг 1</small><h2>Новый TTML</h2></div>
+              <label>Аудиотрек<input id="editorAudio" type="file" accept="audio/*"></label>
+              <label>Название трека<input id="trackTitle" placeholder="Название"></label>
+              <label>Исполнитель<input id="trackArtist" placeholder="Исполнитель"></label>
+              <label>Альбом<input id="trackAlbum" placeholder="Альбом"></label>
+              <label class="lyrics-field">Текст песни<textarea id="lyricsInput" placeholder="Каждая строка песни с новой строки"></textarea></label>
+              <div class="form-footer"><span class="status" id="editorStatus"></span><button class="primary" id="toSync">Далее →</button></div>
+            </div>
+          </div>
+          <div class="editor-stage" data-editor-stage="sync">
+            <div class="sync-grid">
+              <aside class="panel sync-controls">
+                <div class="panel-title"><small>Шаг 2</small><h2>Синхронизация</h2></div>
+                <div class="segmented"><button class="active" data-sync-mode="line">Построчно</button><button data-sync-mode="word">Пословно</button></div>
+                <audio id="editorPlayer" controls></audio>
+                <div class="progress-meta"><span id="syncCounter">0 / 0</span><button class="text-button" id="resetSync">Сбросить</button></div>
+                <div class="space-hint"><kbd>Пробел</kbd><strong>Удерживайте, пока звучит фрагмент</strong></div>
+                <div class="button-row"><button id="backToDetails">Назад</button><button class="primary" id="toExport">Просмотр</button></div>
+              </aside>
+              <div class="sync-list panel" id="syncList"></div>
+            </div>
+          </div>
+          <div class="editor-stage" data-editor-stage="export">
+            <div class="export-grid">
+              <div class="preview-shell" id="editorPreview"></div>
+              <aside class="panel export-actions">
+                <div class="panel-title"><small>Шаг 3</small><h2>Готово</h2></div>
+                <button id="backToSync">Исправить тайминги</button>
+                <button class="primary" id="downloadTTML">Скачать TTML</button>
+              </aside>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="automaticScreen">
+        <div class="empty-state panel"><span class="mode-icon">✦</span><span class="badge">Бета</span><h2>Автоматическая синхронизация</h2><p>Этот модуль появится в следующем обновлении веб-версии.</p></div>
+      </section>
+
+      <section class="screen" id="visualizerScreen">
+        <div class="workspace visualizer-layout">
+          <aside class="panel controls-panel visualizer-controls">
+            <div class="panel-title"><small>REVLIS</small><h2>Track Visualizer</h2></div>
+            <label class="file-control"><span>Аудиотрек</span><input id="vizAudio" type="file" accept="audio/*"><b>Выбрать</b></label>
+            <label class="file-control"><span>TTML-файл</span><input id="vizTTML" type="file" accept=".ttml,.xml,text/xml,application/xml"><b>Выбрать</b></label>
+            <label class="file-control"><span>Обложка</span><input id="vizCover" type="file" accept="image/*"><b>Выбрать</b></label>
+            <label>Название<input id="vizTitle" placeholder="Название трека"></label>
+            <label>Исполнитель<input id="vizArtist" placeholder="Исполнитель"></label>
+            <audio id="vizPlayer" controls></audio>
+            <button class="primary" id="openVideoExport">Настроить экспорт</button>
+            <p class="status" id="vizStatus"></p>
+          </aside>
+          <div class="visualizer-frame" id="visualizerFrame">
+            <canvas id="visualizerCanvas" width="1280" height="720"></canvas>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="videoExportDialog">
+    <form method="dialog" class="dialog-content">
+      <div class="dialog-heading"><div><h2>Экспорт видео</h2><p>Настройте файл для браузерного экспорта.</p></div><button value="cancel" class="icon-button">×</button></div>
+      <label>Разрешение<select id="webVideoResolution"><option value="1280x720">HD</option><option value="1920x1080" selected>Full HD</option><option value="2560x1440">2K</option></select></label>
+      <label>FPS<select id="webVideoFPS"><option>30</option><option selected>60</option></select></label>
+      <p class="status">Формат зависит от поддержки браузера: MP4 или WebM.</p>
+      <progress id="webExportProgress" max="1" value="0"></progress>
+      <div class="button-row"><button value="cancel" id="cancelWebExport">Отмена</button><button value="default" type="button" class="primary" id="startWebExport">Экспортировать</button></div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

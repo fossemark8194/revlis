@@ -1,0 +1,17 @@
+{
+  "name": "REVLIS",
+  "short_name": "REVLIS",
+  "description": "Редактор, проверка и визуализация синхронизированных TTML-текстов.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f7",
+  "theme_color": "#087cff",
+  "icons": [
+    {
+      "src": "assets/revlis-1024.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
