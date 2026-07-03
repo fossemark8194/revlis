@@ -5,6 +5,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const clamp = (value, min = 0, max = 1) => Math.min(Math.max(value, min), max);
 const smoothstep = value => { const t = clamp(value); return t * t * (3 - 2 * t); };
 const escapeXML = value => String(value).replace(/[<>&"']/g, char => ({"<":"&lt;", ">":"&gt;", "&":"&amp;", '"':"&quot;", "'":"&apos;"}[char]));
+const escapeHTML = value => String(value).replace(/[<>&"']/g, char => ({"<":"&lt;", ">":"&gt;", "&":"&amp;", '"':"&quot;", "'":"&#39;"}[char]));
 const formatTime = value => `${Math.floor((value || 0) / 60)}:${Math.floor(value || 0) % 60 < 10 ? "0" : ""}${Math.floor(value || 0) % 60}`;
 
 const state = {
@@ -17,6 +18,7 @@ const state = {
 const routes = { home: "", verify: "Проверка", editor: "Редактор", automatic: "Автоматическая синхронизация · Бета", visualizer: "Track Visualizer · Бета" };
 
 function navigate(route) {
+  document.querySelectorAll("audio").forEach(audio => audio.pause());
   state.route = route;
   $$(".screen").forEach(screen => screen.classList.remove("active"));
   $(`#${route}Screen`).classList.add("active");
@@ -122,18 +124,28 @@ function cueProgress(cue, time) {
   return clamp((time - early) / (cue.end - early));
 }
 
+function wordLayer(text, className) {
+  return `<span class="word-layer ${className}">${[...text].map((character, index) => `<i data-letter="${index}">${escapeHTML(character)}</i>`).join("")}</span>`;
+}
+
+function playerMarkup(audioURL) {
+  return `<div class="preview-player"><button class="preview-toggle" aria-label="Воспроизвести">▶</button><div class="preview-timeline"><input class="preview-seek" type="range" min="0" max="1" step="0.001" value="0"><div class="time-row"><time class="preview-time">0:00</time><time class="preview-duration">0:00</time></div></div><audio src="${escapeHTML(audioURL || "")}"></audio></div>`;
+}
+
 function createPreview(container, lyricsDocument, audioURL, coverURL = "") {
   if (!lyricsDocument) { container.innerHTML = '<div class="empty-state"><p>Добавьте TTML</p></div>'; return; }
   container.innerHTML = `
     <div class="apple-preview" style="--preview-image:url('${coverURL || "assets/revlis-1024.png"}')">
       <div class="preview-background"></div><div class="preview-dim"></div>
       <div class="preview-content">
-        <div class="track-chip"><img src="${coverURL || "assets/revlis-1024.png"}" alt=""><div><strong>${lyricsDocument.title}</strong><span>${lyricsDocument.artist || "Исполнитель"}</span></div></div>
+        <div class="track-chip"><img src="${coverURL || "assets/revlis-1024.png"}" alt=""><div><strong>${escapeHTML(lyricsDocument.title)}</strong><span>${escapeHTML(lyricsDocument.artist || "Исполнитель")}</span></div></div>
         <div class="lyrics-viewport"></div>
-        <div class="player-bar"><audio controls src="${audioURL || ""}"></audio></div>
+        <div class="player-bar">${playerMarkup(audioURL)}</div>
       </div>
     </div>`;
-  const audio = $("audio", container);
+  const audio = $("audio", container), toggle = $(".preview-toggle", container), seek = $(".preview-seek", container);
+  toggle.addEventListener("click", () => audio.paused ? audio.play() : audio.pause());
+  seek.addEventListener("input", () => { if (Number.isFinite(audio.duration)) audio.currentTime = Number(seek.value) * audio.duration; });
   const viewport = $(".lyrics-viewport", container);
   const introDots = window.document.createElement("div"); introDots.className = "intro-dots"; introDots.textContent = "•••"; introDots.hidden = true; viewport.append(introDots);
   lyricsDocument.lines.forEach((line, lineIndex) => {
@@ -142,12 +154,17 @@ function createPreview(container, lyricsDocument, audioURL, coverURL = "") {
     element.dataset.line = lineIndex;
     if (lyricsDocument.mode === "word") {
       lyricsDocument.cues.filter(cue => cue.lineIndex === lineIndex).forEach(cue => {
-        const span = window.document.createElement("span"); span.className = "word"; span.textContent = cue.text; span.dataset.word = cue.text; span.dataset.begin = cue.begin; span.dataset.end = cue.end; element.append(span);
+        const span = window.document.createElement("span"); span.className = "word"; span.dataset.begin = cue.begin; span.dataset.end = cue.end;
+        span.innerHTML = `${wordLayer(cue.text, "rest")}${wordLayer(cue.text, "fill")}`; element.append(span);
       });
     } else element.textContent = line;
     viewport.append(element);
   });
-  previewInstances.push({ container, viewport, audio, introDots, document: lyricsDocument });
+  $$(".lyric-line", viewport).forEach(line => line.addEventListener("click", () => {
+    const cues = lyricsDocument.cues.filter(cue => cue.lineIndex === Number(line.dataset.line) && cue.begin != null);
+    if (cues.length) { audio.currentTime = Math.min(...cues.map(cue => cue.begin)); audio.play(); }
+  }));
+  previewInstances.push({ container, viewport, audio, toggle, seek, introDots, document: lyricsDocument });
 }
 
 const previewInstances = [];
@@ -155,12 +172,16 @@ function updatePreviews() {
   previewInstances.forEach(instance => {
     if (!instance.container.isConnected) return;
     const time = instance.audio.currentTime || 0;
+    instance.toggle.textContent = instance.audio.paused ? "▶" : "Ⅱ";
+    instance.seek.value = instance.audio.duration ? time / instance.audio.duration : 0;
+    $(".preview-time", instance.container).textContent = formatTime(time);
+    $(".preview-duration", instance.container).textContent = formatTime(instance.audio.duration);
     const focus = visualFocus(instance.document, time);
     const pause = instrumentalBreak(instance.document, time);
     instance.introDots.hidden = !pause;
     if (pause) {
       instance.introDots.style.top = `${50 + (pause.visualPosition - focus) * 20}%`;
-      instance.introDots.style.setProperty("--fill", `${clamp((time - pause.start) / (pause.end - pause.start)) * 100}%`);
+      instance.introDots.style.setProperty("--front", `${clamp((time - pause.start) / (pause.end - pause.start)) * 134}%`);
       instance.introDots.style.opacity = 1 - smoothstep((time - (pause.end - .45)) / .45);
     }
     $$(".lyric-line", instance.viewport).forEach(line => {
@@ -170,8 +191,18 @@ function updatePreviews() {
       line.style.opacity = resting + (1 - resting) * emphasis;
       line.style.filter = `blur(${Math.max(distance - 1.35, 0) * 2}px)`;
       $$(".word", line).forEach(word => {
-        const cue = { begin: Number(word.dataset.begin), end: Number(word.dataset.end) };
-        word.style.setProperty("--fill", `${cueProgress(cue, time) * 100}%`);
+        const cue = { begin: Number(word.dataset.begin), end: Number(word.dataset.end) }, progress = cueProgress(cue, time);
+        word.style.setProperty("--front", `${progress * 155}%`);
+        const duration = cue.end - cue.begin, letters = $$("i", word), count = letters.length;
+        letters.forEach(letter => {
+          let wave = 0;
+          if (duration >= 1.8 && time >= cue.begin && time <= cue.end && count) {
+            const rawProgress=clamp((time-cue.begin)/duration),strength = clamp((duration - 1.8) / 1), position = count === 1 ? .5 : Number(letter.dataset.letter) / (count - 1);
+            const distance = Math.abs(position - (rawProgress * 1.34 - .17));
+            wave = distance < .46 ? smoothstep(Math.cos((distance/.46)*Math.PI/2))*strength : 0;
+          }
+          letter.style.setProperty("--wave", wave.toFixed(4));
+        });
       });
     });
   });
@@ -202,13 +233,29 @@ function refreshVerify() { previewInstances.splice(0, previewInstances.length, .
 
 const editorPlayer = $("#editorPlayer");
 $("#editorAudio").addEventListener("change", event => useAudioFile(event.target, editorPlayer, (url, file) => {
-  state.editor.audioURL = url; if (!$("#trackTitle").value) $("#trackTitle").value = file.name.replace(/\.[^.]+$/, "");
+  state.editor.audioURL = url; $("#syncFileName").textContent = file.name; if (!$("#trackTitle").value) $("#trackTitle").value = file.name.replace(/\.[^.]+$/, "");
 }));
 
+$("#syncPlay").addEventListener("click", () => editorPlayer.paused ? editorPlayer.play() : editorPlayer.pause());
+$("#syncSeek").addEventListener("input", event => { if (Number.isFinite(editorPlayer.duration)) editorPlayer.currentTime = Number(event.target.value) * editorPlayer.duration; });
+$("#syncRate").addEventListener("input", event => { editorPlayer.playbackRate = Number(event.target.value); $("#syncRateValue").textContent = `${Number(event.target.value).toFixed(2)}x`; });
+
+function updateSyncPlayer() {
+  $("#syncPlay").textContent = editorPlayer.paused ? "▶" : "Ⅱ";
+  $("#syncSeek").value = editorPlayer.duration ? editorPlayer.currentTime / editorPlayer.duration : 0;
+  $("#syncCurrentTime").textContent = formatTime(editorPlayer.currentTime);
+  $("#syncDuration").textContent = formatTime(editorPlayer.duration);
+  requestAnimationFrame(updateSyncPlayer);
+}
+requestAnimationFrame(updateSyncPlayer);
+
 function editorStage(name) {
+  if (name !== "sync") editorPlayer.pause();
+  if (name !== "export") $("#editorPreview audio")?.pause();
   $$(".editor-stage").forEach(stage => stage.classList.toggle("active", stage.dataset.editorStage === name));
   const order = ["details", "sync", "export"], active = order.indexOf(name);
   $$(".editor-steps span").forEach((step, index) => step.classList.toggle("active", index === active));
+  if (name === "sync" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
 }
 
 function buildEditorCues() {
@@ -218,6 +265,7 @@ function buildEditorCues() {
     ? lines.map((text, lineIndex) => ({ lineIndex, wordIndex: null, text, begin: null, end: null }))
     : lines.flatMap((line, lineIndex) => line.split(/\s+/).map((text, wordIndex) => ({ lineIndex, wordIndex, text, begin: null, end: null })));
   renderSyncList();
+  $("#syncMessage").textContent = "";
 }
 
 $("#toSync").addEventListener("click", () => {
@@ -229,33 +277,68 @@ $("#backToSync").addEventListener("click", () => editorStage("sync"));
 $$('[data-sync-mode]').forEach(button => button.addEventListener("click", () => {
   state.editor.mode = button.dataset.syncMode; $$('[data-sync-mode]').forEach(item => item.classList.toggle("active", item === button)); buildEditorCues();
 }));
-$("#resetSync").addEventListener("click", buildEditorCues);
+$("#resetSync").addEventListener("click", () => {
+  editorPlayer.pause(); editorPlayer.currentTime = 0; state.editor.holding = false; state.editor.index = 0;
+  state.editor.cues.forEach(cue => { cue.begin = null; cue.end = null; });
+  $("#syncMessage").textContent = "Все тайминги сброшены. Начните с первого фрагмента"; renderSyncList();
+});
+$("#resetCue").addEventListener("click", () => {
+  if (!state.editor.cues.length) return;
+  let index = Math.min(state.editor.index, state.editor.cues.length - 1);
+  if (state.editor.cues[index].begin == null && index > 0) index -= 1;
+  const cue = state.editor.cues[index], previousBegin = cue.begin; cue.begin = null; cue.end = null; state.editor.index = index; state.editor.holding = false;
+  if (Number.isFinite(previousBegin)) editorPlayer.currentTime = previousBegin;
+  $("#syncMessage").textContent = `${state.editor.mode === "word" ? "Слово" : "Строка"} готова к повторной синхронизации`; renderSyncList();
+});
 
 function renderSyncList() {
   const list = $("#syncList"); list.innerHTML = "";
-  state.editor.cues.forEach((cue, index) => {
-    const row = document.createElement("div"); row.className = `sync-row ${index === state.editor.index ? "active" : ""} ${cue.end != null ? "done" : ""}`;
-    row.innerHTML = `<small>${cue.begin == null ? "--" : `${cue.begin.toFixed(3)} — ${cue.end?.toFixed(3) || "…"}`}</small>${cue.text}`;
-    row.addEventListener("click", () => { state.editor.index = index; if (cue.begin != null) editorPlayer.currentTime = cue.begin; renderSyncList(); }); list.append(row);
-  });
+  if (state.editor.mode === "word") {
+    state.editor.lines.forEach((line, lineIndex) => {
+      const group=document.createElement("div"); group.className="sync-word-line"; group.innerHTML=`<small>${escapeHTML(line)}</small><div class="sync-words"></div>`;
+      state.editor.cues.forEach((cue,index)=>{if(cue.lineIndex!==lineIndex)return;const word=document.createElement("button");word.className=`sync-word ${index===state.editor.index?"active":""} ${cue.end!=null?"done":""}`;word.textContent=cue.text;word.title=cue.begin==null?"Без тайминга":`${cue.begin.toFixed(3)} — ${cue.end.toFixed(3)}`;word.addEventListener("click",()=>{state.editor.index=index;if(cue.begin!=null)editorPlayer.currentTime=cue.begin;$("#syncMessage").textContent="";renderSyncList();});$(".sync-words",group).append(word);});
+      list.append(group);
+    });
+  } else {
+    state.editor.cues.forEach((cue, index) => {
+      const row = document.createElement("div"); row.className = `sync-row ${index === state.editor.index ? "active" : ""} ${cue.end != null ? "done" : ""}`;
+      row.innerHTML = `<small>${cue.begin == null ? "--" : `${cue.begin.toFixed(3)} — ${cue.end?.toFixed(3) || "…"}`}</small>${escapeHTML(cue.text)}`;
+      row.addEventListener("click", () => { state.editor.index = index; if (cue.begin != null) editorPlayer.currentTime = cue.begin; $("#syncMessage").textContent = ""; renderSyncList(); }); list.append(row);
+    });
+  }
   $("#syncCounter").textContent = `${state.editor.cues.filter(cue => cue.end != null).length} / ${state.editor.cues.length}`;
+  $("#resetCueLabel").textContent = state.editor.mode === "word" ? "Слово" : "Строка";
+  $("#spaceHintTitle").textContent = state.editor.index >= state.editor.cues.length ? "Синхронизация завершена" : state.editor.holding ? "Отпустите пробел в конце" : "Удерживайте пробел";
   list.querySelector(".active")?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 function isSyncScreen() { return state.route === "editor" && $('[data-editor-stage="sync"]').classList.contains("active"); }
+function isTextEditing(element) {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.isContentEditable || element.tagName === "TEXTAREA") return true;
+  return element.tagName === "INPUT" && !["range", "button", "checkbox", "radio"].includes(element.type);
+}
+function consumeSyncSpace(event) {
+  if (!isSyncScreen() || event.code !== "Space" || isTextEditing(event.target)) return false;
+  event.preventDefault(); event.stopPropagation();
+  return true;
+}
 window.addEventListener("keydown", event => {
-  if (!isSyncScreen() || event.code !== "Space" || event.repeat || ["INPUT","TEXTAREA"].includes(document.activeElement.tagName)) return;
-  event.preventDefault(); const cue = state.editor.cues[state.editor.index]; if (!cue) return;
-  if (editorPlayer.paused) editorPlayer.play(); cue.begin = editorPlayer.currentTime; cue.end = null; state.editor.holding = true; renderSyncList();
-});
+  if (!consumeSyncSpace(event) || event.repeat) return;
+  const cue = state.editor.cues[state.editor.index]; if (!cue) return;
+  if (editorPlayer.paused) editorPlayer.play(); cue.begin = editorPlayer.currentTime; cue.end = null; state.editor.holding = true; $("#syncMessage").textContent = ""; renderSyncList();
+  document.body.classList.add("sync-space-held");
+}, true);
 window.addEventListener("keyup", event => {
-  if (!isSyncScreen() || event.code !== "Space" || !state.editor.holding) return;
-  event.preventDefault(); const cue = state.editor.cues[state.editor.index]; cue.end = Math.max(editorPlayer.currentTime, cue.begin + .01); state.editor.holding = false; state.editor.index = Math.min(state.editor.index + 1, state.editor.cues.length); renderSyncList();
-});
+  if (!consumeSyncSpace(event)) return;
+  document.body.classList.remove("sync-space-held");
+  if (!state.editor.holding) return;
+  const cue = state.editor.cues[state.editor.index]; cue.end = Math.max(editorPlayer.currentTime, cue.begin + .01); state.editor.holding = false; state.editor.index = Math.min(state.editor.index + 1, state.editor.cues.length); renderSyncList();
+}, true);
 
 function editorDocument() { return { title: $("#trackTitle").value || "Без названия", artist: $("#trackArtist").value, album: $("#trackAlbum").value, language: "ru", mode: state.editor.mode, lines: state.editor.lines, cues: state.editor.cues }; }
 $("#toExport").addEventListener("click", () => {
-  editorStage("export"); const container = $("#editorPreview"); previewInstances.splice(0, previewInstances.length, ...previewInstances.filter(item => item.container !== container)); createPreview(container, editorDocument(), state.editor.audioURL);
+  editorPlayer.pause(); editorStage("export"); const container = $("#editorPreview"); previewInstances.splice(0, previewInstances.length, ...previewInstances.filter(item => item.container !== container)); createPreview(container, editorDocument(), state.editor.audioURL);
 });
 
 function timecode(value) { const h = Math.floor(value / 3600), m = Math.floor(value % 3600 / 60), s = (value % 60).toFixed(3).padStart(6,"0"); return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${s}`; }
@@ -274,6 +357,8 @@ function downloadBlob(blob, name) { const link = document.createElement("a"); li
 $("#downloadTTML").addEventListener("click", () => downloadBlob(new Blob([buildTTML(editorDocument())], { type: "application/ttml+xml" }), `${$("#trackTitle").value || "lyrics"}.ttml`));
 
 const vizPlayer = $("#vizPlayer"), vizCanvas = $("#visualizerCanvas"), vizContext = vizCanvas.getContext("2d");
+$("#vizPlay").addEventListener("click",()=>vizPlayer.paused?vizPlayer.play():vizPlayer.pause());
+$("#vizSeek").addEventListener("input",event=>{if(Number.isFinite(vizPlayer.duration))vizPlayer.currentTime=Number(event.target.value)*vizPlayer.duration;});
 $("#vizAudio").addEventListener("change", event => useAudioFile(event.target, vizPlayer, (url, file) => { state.visualizer.audioURL = url; if (!$("#vizTitle").value) $("#vizTitle").value = file.name.replace(/\.[^.]+$/, ""); }));
 $("#vizTTML").addEventListener("change", async event => { try { const { text } = await readTextFile(event.target); state.visualizer.document = parseTTML(text); $("#vizTitle").value ||= state.visualizer.document.title; $("#vizArtist").value ||= state.visualizer.document.artist; $("#vizStatus").textContent = "TTML загружен"; } catch(error) { $("#vizStatus").textContent = error.message; } });
 $("#vizCover").addEventListener("change", event => {
@@ -294,6 +379,7 @@ function drawCover(ctx, image, x, y, size) {
 
 function drawVisualizer() {
   const ctx = vizContext, W = vizCanvas.width, H = vizCanvas.height, time = vizPlayer.currentTime || 0, phase = performance.now()/1000, palette = state.visualizer.palette;
+  $("#vizPlay").textContent=vizPlayer.paused?"▶":"Ⅱ";$("#vizSeek").value=vizPlayer.duration?time/vizPlayer.duration:0;$("#vizCurrentTime").textContent=formatTime(time);$("#vizDuration").textContent=formatTime(vizPlayer.duration);
   ctx.clearRect(0,0,W,H); const gradient = ctx.createLinearGradient(Math.sin(phase*.12)*W*.2,0,W,H+Math.cos(phase*.1)*H*.2); palette.forEach((color,index)=>gradient.addColorStop(index/(palette.length-1),color)); ctx.fillStyle=gradient; ctx.fillRect(0,0,W,H);
   if (state.visualizer.cover) { ctx.save(); ctx.globalAlpha=.28; ctx.filter=`blur(${W*.025}px) saturate(1.5)`; ctx.drawImage(state.visualizer.cover,-W*.05,-H*.15,W*1.1,H*1.3); ctx.restore(); }
   ctx.fillStyle="rgba(0,0,0,.28)"; ctx.fillRect(0,0,W,H);
@@ -309,8 +395,23 @@ function drawCanvasLyrics(ctx, document, time, x, width, height) {
   if (!document) return; const focus=visualFocus(document,time), slot=height*.132, center=height/2; ctx.font=`750 ${Math.min(width*.066,height*.055)}px -apple-system`; ctx.textBaseline="middle";
   const pause=instrumentalBreak(document,time); if(pause){const p=clamp((time-pause.start)/(pause.end-pause.start)),y=center+(pause.visualPosition-focus)*slot,measure=ctx.measureText("•••"),edge=Math.min(measure.width*.4,width*.08);ctx.save();ctx.globalAlpha=1-smoothstep((time-(pause.end-.45))/.45);ctx.fillStyle="rgba(255,255,255,.22)";ctx.fillText("•••",x,y);const gradient=ctx.createLinearGradient(x,y,x+measure.width+edge,y);gradient.addColorStop(0,"rgba(255,255,255,.94)");gradient.addColorStop(clamp(p-.18),"rgba(255,255,255,.94)");gradient.addColorStop(Math.max(clamp(p),.001),"rgba(255,255,255,0)");ctx.fillStyle=gradient;ctx.fillText("•••",x,y);ctx.restore();}
   document.lines.forEach((line,index)=>{ const distance=Math.abs(index-focus); if(distance>3)return; const emphasis=lineEmphasis(document,index,time),rest=distance<.75?.34:distance<1.75?.27:.15,alpha=rest+(1-rest)*emphasis,y=center+(index-focus)*slot; ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle="#fff";
-    if(document.mode==="word") { let cursor=x; document.cues.filter(c=>c.lineIndex===index).forEach(cue=>{ const measure=ctx.measureText(cue.text),p=cueProgress(cue,time); ctx.globalAlpha=rest; ctx.fillText(cue.text,cursor,y); ctx.save(); ctx.beginPath(); ctx.rect(cursor,y-slot*.42,(measure.width+width*.02)*p,slot*.84); ctx.clip(); ctx.globalAlpha=.96*emphasis; ctx.fillText(cue.text,cursor,y); ctx.restore(); cursor+=measure.width+width*.025; }); }
+    if(document.mode==="word") { let cursor=x; document.cues.filter(c=>c.lineIndex===index).forEach(cue=>{ cursor+=drawCanvasWord(ctx,cue,time,cursor,y,rest,emphasis)+width*.025; }); }
     else ctx.fillText(line,x,y,width); ctx.restore(); });
+}
+
+function drawCanvasWord(ctx, cue, time, x, y, resting, emphasis) {
+  const characters=[...cue.text], widths=characters.map(character=>ctx.measureText(character).width), total=widths.reduce((sum,value)=>sum+value,0), progress=cueProgress(cue,time), duration=cue.end-cue.begin;
+  const edge=Math.min(Math.max(total*.55,22),78), front=x+(total+edge)*progress, gradient=ctx.createLinearGradient(front-edge,y,front,y);
+  gradient.addColorStop(0,"rgba(255,255,255,.94)"); gradient.addColorStop(1,"rgba(255,255,255,0)");
+  let cursor=x;
+  characters.forEach((character,index)=>{
+    let wave=0;
+    if(duration>=1.8&&time>=cue.begin&&time<=cue.end&&characters.length){const rawProgress=clamp((time-cue.begin)/duration),strength=clamp((duration-1.8)/1),position=characters.length===1?.5:index/(characters.length-1),distance=Math.abs(position-(rawProgress*1.34-.17));wave=distance<.46?smoothstep(Math.cos((distance/.46)*Math.PI/2))*strength:0;}
+    const lift=wave*ctx.measureText("M").actualBoundingBoxAscent*.16, scale=1+wave*.07;
+    ctx.save(); ctx.translate(cursor,y-lift); ctx.scale(scale,scale); ctx.globalAlpha=resting; ctx.fillStyle="#fff"; ctx.fillText(character,0,0); ctx.globalAlpha=emphasis; ctx.fillStyle=gradient; ctx.fillText(character,0,0); ctx.restore();
+    cursor+=widths[index];
+  });
+  return total;
 }
 requestAnimationFrame(drawVisualizer);
 
