@@ -85,10 +85,26 @@
               <aside class="panel sync-controls">
                 <div class="panel-title"><small>Шаг 2</small><h2>Синхронизация</h2></div>
                 <div class="segmented"><button class="active" data-sync-mode="line">Построчно</button><button data-sync-mode="word">Пословно</button></div>
-                <audio id="editorPlayer" controls></audio>
-                <div class="progress-meta"><span id="syncCounter">0 / 0</span><button class="text-button" id="resetSync">Сбросить</button></div>
-                <div class="space-hint"><kbd>Пробел</kbd><strong>Удерживайте, пока звучит фрагмент</strong></div>
-                <div class="button-row"><button id="backToDetails">Назад</button><button class="primary" id="toExport">Просмотр</button></div>
+                <audio id="editorPlayer"></audio>
+                <div class="sync-player">
+                  <button class="player-toggle primary" id="syncPlay" aria-label="Воспроизвести">▶</button>
+                  <div class="player-track">
+                    <strong id="syncFileName">Аудиотрек</strong>
+                    <span>Позиция трека</span>
+                    <input id="syncSeek" type="range" min="0" max="1" step="0.001" value="0">
+                    <div class="time-row"><time id="syncCurrentTime">0:00</time><time id="syncDuration">0:00</time></div>
+                  </div>
+                </div>
+                <label class="speed-control"><span><b>Скорость</b><output id="syncRateValue">1.00x</output></span><input id="syncRate" type="range" min="0.5" max="1.25" step="0.05" value="1"></label>
+                <div class="progress-meta"><b>Готово</b><span id="syncCounter">0 / 0</span></div>
+                <p class="sync-message" id="syncMessage"></p>
+                <div class="space-hint"><kbd>Пробел</kbd><strong id="spaceHintTitle">Удерживайте пробел</strong><span>Пока звучит текущий фрагмент</span></div>
+                <div class="sync-actions">
+                  <button id="backToDetails">Назад</button>
+                  <button id="resetCue">↶ <span id="resetCueLabel">Строка</span></button>
+                  <button id="resetSync">Сбросить всё</button>
+                  <button class="primary" id="toExport">Просмотр</button>
+                </div>
               </aside>
               <div class="sync-list panel" id="syncList"></div>
             </div>
@@ -119,7 +135,15 @@
             <label class="file-control"><span>Обложка</span><input id="vizCover" type="file" accept="image/*"><b>Выбрать</b></label>
             <label>Название<input id="vizTitle" placeholder="Название трека"></label>
             <label>Исполнитель<input id="vizArtist" placeholder="Исполнитель"></label>
-            <audio id="vizPlayer" controls></audio>
+            <audio id="vizPlayer"></audio>
+            <div class="sync-player viz-player-controls">
+              <button class="player-toggle primary" id="vizPlay" aria-label="Воспроизвести">▶</button>
+              <div class="player-track">
+                <span>Позиция трека</span>
+                <input id="vizSeek" type="range" min="0" max="1" step="0.001" value="0">
+                <div class="time-row"><time id="vizCurrentTime">0:00</time><time id="vizDuration">0:00</time></div>
+              </div>
+            </div>
             <button class="primary" id="openVideoExport">Настроить экспорт</button>
             <p class="status" id="vizStatus"></p>
           </aside>
